@@ -422,6 +422,41 @@ class EDMessageBodyFF(MessageBody):
             data_offset += length
 
 
+class EDMessageBody15(MessageBody):
+    """ED message body 15 (set command response).
+
+    Set 命令(body_type=0x15)的响应体解析。
+    响应格式与发送格式一致：
+        body[0] = 0x15 (body_type, 已被 MessageBody 解析)
+        body[1] = pack_count (参数个数)
+        body[2] = 0x00
+        然后每 5 字节一组：[item1, item2, value, addition_lo, addition_hi]
+        param = item2 << 8 | item1
+
+    从响应中提取各控制属性的确认值，避免使用 EDMessageBodyFF 错误解析。
+    """
+
+    def __init__(self, body: bytearray) -> None:
+        """Initialize ED message body 15."""
+        super().__init__(body)
+        if len(body) < 3:  # noqa: PLR2004
+            return
+        pack_count = body[1]
+        offset = 3  # skip body_type(body[0]), pack_count(body[1]), reserved(body[2])
+        for _ in range(pack_count):
+            if offset + 5 > len(body):
+                break
+            param = body[offset + 1] << 8 | body[offset]
+            value = body[offset + 2]
+            if param == NewSetTags.power:
+                self.power = value > 0
+            elif param == NewSetTags.lock:
+                self.child_lock = value > 0
+            elif param == NewSetTags.heat:
+                self.heat = value > 0
+            offset += 5
+
+
 class MessageEDResponse(MessageResponse):
     """ED message response."""
 
@@ -434,16 +469,21 @@ class MessageEDResponse(MessageResponse):
             MessageType.notify1,
         ]:
             self.device_class = self._body_type
-            if self._body_type in [ListTypes.X00, ListTypes.X15, ListTypes.FF]:
-                self.set_body(EDMessageBodyFF(super().body))
-            if self.body_type == ListTypes.X01:
-                self.set_body(EDMessageBody01(super().body))
-            elif self.body_type in [ListTypes.X03, ListTypes.X04]:
-                self.set_body(EDMessageBody03(super().body))
-            elif self.body_type == ListTypes.X05:
-                self.set_body(EDMessageBody05(super().body))
-            elif self.body_type == ListTypes.X06:
-                self.set_body(EDMessageBody06(super().body))
-            elif self.body_type == ListTypes.X07:
-                self.set_body(EDMessageBody07(super().body))
+            # Lua 脚本中只解析 query(0x03) 和 notify(0x04) 的响应，
+            # set(0x02) 响应不解析（美的美居也不依赖 set 响应更新状态）。
+            # 因此 set 响应不应进入任何 body 解析分支，
+            # 避免 EDMessageBodyFF 错误解析 0x15 格式数据导致属性被覆盖。
+            if self._message_type != MessageType.set:
+                if self._body_type in [ListTypes.X00, ListTypes.FF]:
+                    self.set_body(EDMessageBodyFF(super().body))
+                if self.body_type == ListTypes.X01:
+                    self.set_body(EDMessageBody01(super().body))
+                elif self.body_type in [ListTypes.X03, ListTypes.X04]:
+                    self.set_body(EDMessageBody03(super().body))
+                elif self.body_type == ListTypes.X05:
+                    self.set_body(EDMessageBody05(super().body))
+                elif self.body_type == ListTypes.X06:
+                    self.set_body(EDMessageBody06(super().body))
+                elif self.body_type == ListTypes.X07:
+                    self.set_body(EDMessageBody07(super().body))
         self.set_attr()
