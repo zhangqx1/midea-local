@@ -39,6 +39,12 @@ class DeviceAttributes(StrEnum):
     life2 = "life2"
     life3 = "life3"
     child_lock = "child_lock"
+    # 加热开关(可读写, 控制是否开启加热)
+    heat = "heat"
+    # 加热运行状态(只读, 设备当前是否正在加热)
+    heat_status = "heat_status"
+    # 加热目标温度(只读, 从设备读取)
+    heat_temperature = "heat_temperature"
 
 
 class MideaEDDevice(MideaDevice):
@@ -81,6 +87,12 @@ class MideaEDDevice(MideaDevice):
                 DeviceAttributes.life2: None,
                 DeviceAttributes.life3: None,
                 DeviceAttributes.child_lock: False,
+                # 加热开关, 默认关闭
+                DeviceAttributes.heat: False,
+                # 加热运行状态, 默认未加热
+                DeviceAttributes.heat_status: False,
+                # 加热目标温度, 默认未知
+                DeviceAttributes.heat_temperature: None,
             },
         )
         self._device_class = ListTypes.X00
@@ -152,7 +164,12 @@ class MideaEDDevice(MideaDevice):
         """Midea ED device set attribute."""
         message: MessageNewSet | MessageOldSet | None = None
         if self._use_new_set():
-            if attr in [DeviceAttributes.power, DeviceAttributes.child_lock]:
+            if attr in [
+                DeviceAttributes.power,
+                DeviceAttributes.child_lock,
+                # 加热开关: 通过 MessageNewSet 发送 param=0x0400 的控制命令
+                DeviceAttributes.heat,
+            ]:
                 message = MessageNewSet(self._message_protocol_version)
         elif attr in []:
             message = MessageOldSet(self._message_protocol_version)

@@ -22,10 +22,18 @@ class Attributes(IntEnum):
 
 
 class NewSetTags(IntEnum):
-    """New set tags."""
+    """New set tags.
+
+    控制命令的参数标签，对应 Lua 脚本中 setbytes(item1, item2, ...) 的编码方式：
+    param = item2 << 8 | item1
+    例如 power: setbytes(0x00, 0x01, ...) → 0x01 << 8 | 0x00 = 0x0100
+    """
 
     power = 0x0100
     lock = 0x0201
+    # 加热开关控制，对应 Lua: setbytes(0x00, 0x04, value, 0x00, 0x00)
+    # param = 0x04 << 8 | 0x00 = 0x0400
+    heat = 0x0400
 
 
 class EDNewSetParamPack:
@@ -233,6 +241,8 @@ class MessageNewSet(MessageEDBase):
         )
         self.power: bool | None = None
         self.lock: bool | None = None
+        # 加热开关，True=开启加热, False=关闭加热
+        self.heat: bool | None = None
 
     @property
     def _body(self) -> bytearray:
@@ -252,6 +262,15 @@ class MessageNewSet(MessageEDBase):
                 EDNewSetParamPack.pack(
                     param=NewSetTags.lock,  # lock
                     value=0x01 if self.lock else 0x00,
+                ),
+            )
+        # 加热开关控制，对应 Lua: setbytes(0x00, 0x04, 0x01/0x00, 0x00, 0x00)
+        if self.heat is not None:
+            pack_count += 1
+            payload.extend(
+                EDNewSetParamPack.pack(
+                    param=NewSetTags.heat,  # heat
+                    value=0x01 if self.heat else 0x00,
                 ),
             )
         payload[1] = pack_count
@@ -279,13 +298,34 @@ class MessageOldSet(MessageEDBase):
 
 
 class EDMessageBody01(MessageBody):
-    """ED message body 01."""
+    """ED message body 01.
+
+    对应 Lua 脚本中 (byte9==0x03, byte10==0x01) 的解析分支。
+    Lua 字节编号与 body[] 索引对应关系: body[N] = Lua byte(N+10)
+
+    body[2] (Lua byte12) 各 bit 含义:
+        bit0 (0x01): power       - 电源开关
+        bit1 (0x02): heat        - 加热开关
+        bit2 (0x04): heat_status - 加热运行状态(只读)
+        bit3 (0x08): cool        - 制冷开关
+        bit4 (0x10): cool_status - 制冷运行状态
+        bit5 (0x20): bubble      - 气泡洗开关
+        bit6 (0x40): bubble_status - 气泡洗运行状态
+    body[10] (Lua byte20): heat_temperature - 加热目标温度
+    body[11] (Lua byte21): cool_temperature - 制冷目标温度
+    """
 
     def __init__(self, body: bytearray) -> None:
         """Initialize ED message body 01."""
         super().__init__(body)
         self.power = (body[2] & 0x01) > 0
+        # body[2] bit1: 加热开关(用户是否开启了加热)
+        self.heat = (body[2] & 0x02) > 0
+        # body[2] bit2: 加热运行状态(设备当前是否正在加热, 只读)
+        self.heat_status = (body[2] & 0x04) > 0
         self.water_consumption = body[7] + (body[8] << 8)
+        # body[10] (Lua byte20): 加热目标温度
+        self.heat_temperature = body[10]
         self.in_tds = body[36] + (body[37] << 8)
         self.out_tds = body[38] + (body[39] << 8)
         self.child_lock = body[15] > 0
